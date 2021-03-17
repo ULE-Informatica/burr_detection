@@ -121,17 +121,17 @@ ap.add_argument("-f", "--folder", required=True, help="Folder to save results im
 
 args = vars(ap.parse_args())
 
-sections_width = 2
+sections_width = 90
 sections_num = 35
 sections_number = 100
 
 if not os.path.exists(args['folder']):
     os.makedirs(args['folder'])
 
-csv_file='data/info_pw_'+str(sections_width)+'_'+str(sections_num)+'.csv'
+csv_file='info_h_'+str(sections_width)+'.csv'#+'_'+str(sections_num)+'.csv'
 data_file = open(csv_file, "w", newline="",encoding="utf-8")
 data_file.close()
-headers = ['img_name','folder','image']  + ['pw_'+str(i) for i in range(1,sections_width*sections_num+1)]
+headers = ['img_name','folder','image']  + ['h_'+str(i) for i in range(1,sections_width+1)] + ['pw_'+str(i) for i in range(1,sections_width+1)]
 with open(csv_file, mode='a+', newline="",encoding="utf-8") as data_file:
 	data_writer = csv.writer(data_file, delimiter=';', quotechar='"', quoting=csv.QUOTE_MINIMAL)
 	data_writer.writerow(headers)
@@ -139,7 +139,7 @@ with open(csv_file, mode='a+', newline="",encoding="utf-8") as data_file:
 for image in os.listdir(args['rustico']):
     if image.endswith('.png'):
         dir = os.path.join(args['rustico'], image)
-        #image = "Pieza_02_foto389.png"
+        #image = "Pieza_12_foto0540.png"
         img_name = image[:-4]
         folder_pieza = img_name[:8]
         img_pieza = img_name[9:]
@@ -148,8 +148,10 @@ for image in os.listdir(args['rustico']):
         img = cv2.imread(os.path.join(args['rustico'], image), cv2.IMREAD_GRAYSCALE)
         original_img =  np.array(Image.open(os.path.join(args['original'], folder_pieza, img_pieza+'.tif')))
         #Morphology
-        kernel = disk(41)
+        kernel = disk(67)
+        #kernel = np.ones((17,77),np.uint8)
         closing = cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernel)
+
         #Percentage of white pixels and potential section
         section_list = sections(closing,sections_number)
         selection, potential_sections = potentialSections(section_list)
@@ -187,7 +189,7 @@ for image in os.listdir(args['rustico']):
             plt.close('all')
 
             #Morphology (potential image)
-            kernel = np.ones((17,73),np.uint8)
+            kernel = np.ones((31,79),np.uint8)
             #kernel = disk(17)
             #closing_potential = cv2.morphologyEx(img_potential_RUSTICO, cv2.MORPH_CLOSE, kernel)
             closing_potential = cv2.dilate(img_potential_RUSTICO,kernel,iterations = 1)
@@ -195,24 +197,70 @@ for image in os.listdir(args['rustico']):
             #Add borders and morhpology
             section_list = sections(closing_potential,10)
             widthMask = closing_potential.shape[1]
+            heightMask = closing_potential.shape[0]
             if section_list[0]>0.5:
                 mask1 = np.ones((10, widthMask), np.uint8)*255
+                mask2 = np.zeros((10, widthMask), np.uint8)
             else:
                 mask1 = np.zeros((10, widthMask), np.uint8)
-            if section_list[-1]>0.5:
                 mask2 = np.ones((10, widthMask), np.uint8)*255
-            else:
-                mask2 = np.zeros((10, widthMask), np.uint8)
+            mask3 = np.ones((heightMask + 20, 10), np.uint8)*255
+
             closing_mask = np.vstack((mask1, closing_potential))
             closing_mask = np.vstack((closing_mask, mask2))
+            closing_mask = np.hstack((mask3, closing_mask))
+            closing_mask = np.hstack((closing_mask, mask3))
             closing_mask = cv2.morphologyEx(closing_mask, cv2.MORPH_CLOSE, kernel)
-            closing_mask = closing_mask[10:-10,:]
+            contours, hierarchy = cv2.findContours(closing_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+            for cnt in contours:
+                added_image = cv2.fillPoly(closing_mask, [cnt], (255))
+            closing_mask = closing_mask[10:-10,10:-10]
+
             #Potential image and mask
             image_mask = cv2.bitwise_not(closing_mask)
             img2 = cv2.merge((image_mask,image_mask,image_mask))
+            #added_image = img_potential.copy()
+            #added_image = cv2.merge((closing_mask,closing_mask,closing_mask))
             added_image = cv2.addWeighted(img2,0.1,img_potential,0.4,0)
+
+
+            #rectangle
+            heigths = []
+            sections_list = []
+            final = []
+            #f, axs = plt.subplots(1,sections_width)
+            for i in range(0,sections_width):
+                dim_heigth = int(closing_mask.shape[1]/sections_width)
+                closing1 = closing_mask[:, i*dim_heigth:(i+1)*dim_heigth]
+                contours, hierarchy = cv2.findContours(closing1, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+                img2 = cv2.merge((closing1,closing1,closing1))
+                if(len(contours)>0):
+                    cnt = contours[0]
+                    area_max = 0
+                    for cn in contours:
+                        area = cv2.contourArea(cn)
+                        if area > area_max:
+                            area_max = area
+                            cnt = cn
+                    hull = cv2.convexHull(cnt)
+                    x,y,w,h = cv2.boundingRect(cnt)
+                    heigths.append(h)
+                    cut1 = closing1[x:x+w, y:y+h]
+                    total_pixels_section = w*h
+                    sections_list.append((np.count_nonzero(cut1 == 255)*100)/total_pixels_section)
+                    img2 = cv2.drawContours(img2, [cnt], -1, (0,255,0), 2)
+                    img2 = cv2.rectangle(img2,(x,y),(x+w,y+h),(255,0,0),2)
+                    if len(final) ==0:
+                        final = img2.copy()
+                    else:
+                        final = np.hstack((final,img2))
+                #axs[i].imshow(img2)
+                #axs[i].axis('off')
+            #plt.show()
+
+
             #Plot potential image process
-            f, axs = plt.subplots(5,1,figsize=(15,10))
+            f, axs = plt.subplots(6,1,figsize=(15,10))
             axs[0].imshow(img_potential)
             axs[0].axis('off')
             axs[0].title.set_text('Original')
@@ -228,11 +276,15 @@ for image in os.listdir(args['rustico']):
             axs[4].imshow(added_image)
             axs[4].axis('off')
             axs[4].title.set_text('Final result')
+            axs[5].imshow(final)
+            axs[5].axis('off')
+            axs[5].title.set_text('Final result')
             #plt.show()
             #exit()
             plt.savefig(os.path.join(args['folder'], img_name+'_potential_process.jpg'), dpi=200)
             plt.close('all')
 
+            """
             list_m = []
             for i in range(0,sections_width):
                 dim_heigth = int(closing_mask.shape[1]/sections_width)
@@ -240,18 +292,18 @@ for image in os.listdir(args['rustico']):
                 section_list = sections(closing1,sections_num)
                 list_m += section_list
                 """
-                selection, potential_sections = potentialSections(section_list)
-                if len(potential_sections)>1:
-                    section_list_np = np.asarray(section_list).astype(np.float)
-                    potential_section = section_list_np[selection]
-                    potential_values = section_list_np[potential_sections]
-                    line = polynomial( np.asarray([potential_sections]).transpose(),np.asarray(potential_values).transpose(),1)
-                    list_m.append(line.m)
-                """
-
-            if len(list_m)==sections_width*sections_num:
+            """
+            selection, potential_sections = potentialSections(section_list)
+            if len(potential_sections)>1:
+                section_list_np = np.asarray(section_list).astype(np.float)
+                potential_section = section_list_np[selection]
+                potential_values = section_list_np[potential_sections]
+                line = polynomial( np.asarray([potential_sections]).transpose(),np.asarray(potential_values).transpose(),1)
+                list_m.append(line.m)
+            """
+            if len(heigths)==sections_width:#*sections_num:
                 # ['img_name','folder','image']  + ['m_'+str(i) for i in range(1,sections_num+1)]
-                data_final = [img_name, int(folder_pieza[-2:]), int(img_pieza[4:])] + list_m
+                data_final = [img_name, int(folder_pieza[-2:]), int(img_pieza[4:])] + heigths + sections_list
                 with open(csv_file, mode='a+', newline="",encoding="utf-8") as data_file:
                     data_writer = csv.writer(data_file, delimiter=';', quotechar='"', quoting=csv.QUOTE_MINIMAL)
                     data_writer.writerow(data_final)
